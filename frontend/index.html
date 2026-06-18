@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Mouse Tracking Demo</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+    .demo-area { height: 1500px; background: #f2f2f2; padding: 20px; margin-top: 20px; }
+    button { margin: 40px; padding: 20px 40px; font-size: 16px; cursor: pointer; }
+    a { color: #0066cc; }
+  </style>
+</head>
+<body>
+  <h1>Website Mouse Tracking — Kafka → Spark → PostgreSQL → Grafana</h1>
+  <p>Move, click and scroll to generate realtime mouse events.</p>
+  <p><a href="/heatmap.html">View Heatmap Overlay →</a></p>
+
+  <button>Click Me</button>
+
+  <div class="demo-area">
+    <h2>Demo Area — scroll and interact here</h2>
+    <p>Events are sent to the Tracking API on every click and every ~5% of mousemove events.</p>
+  </div>
+
+  <script>
+    const API = "http://localhost:8000";
+
+    let sessionId = localStorage.getItem("session_id");
+    if (!sessionId) {
+      sessionId = crypto.randomUUID();
+      localStorage.setItem("session_id", sessionId);
+    }
+
+    function sendEvent(eventType, x, y) {
+      fetch(API + "/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          page_url: window.location.pathname,
+          event_type: eventType,
+          x: x !== null ? Math.round(x) : null,
+          y: y !== null ? Math.round(y) : null,
+          scroll_y: Math.round(window.scrollY),
+          viewport_width: window.innerWidth,
+          viewport_height: window.innerHeight,
+          timestamp: new Date().toISOString()
+        })
+      }).catch(() => {});
+    }
+
+    document.addEventListener("click", e => sendEvent("click", e.pageX, e.pageY));
+
+    document.addEventListener("mousemove", e => {
+      if (Math.random() < 0.05) {
+        sendEvent("mousemove", e.pageX, e.pageY);
+      }
+    });
+
+    document.addEventListener("scroll", () => sendEvent("scroll", null, null));
+  </script>
+</body>
+</html>

@@ -1,0 +1,161 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres_mouse_tracking"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "showHeader": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres_mouse_tracking"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT event_type, count(*) AS total_events FROM event_raw WHERE ('$page_url' = '*' OR page_url = '$page_url') GROUP BY event_type ORDER BY total_events DESC;",
+          "refId": "A"
+        }
+      ],
+      "title": "Events by Type",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres_mouse_tracking"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "showHeader": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres_mouse_tracking"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT page_url, grid_x, grid_y, event_count, updated_at FROM mouse_heatmap WHERE ('$page_url' = '*' OR page_url = '$page_url') ORDER BY event_count DESC LIMIT 50;",
+          "refId": "A"
+        }
+      ],
+      "title": "Mouse Heatmap Buckets",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres_mouse_tracking"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "renderer": "canvas",
+        "editorMode": "code",
+        "getOption": "const frame = context.panel.data.series[0];\nconst emptyOption = (message) => ({\n  title: { text: message, left: 'center', top: 'middle' },\n  xAxis: { type: 'value' },\n  yAxis: { type: 'value', inverse: true },\n  series: []\n});\nif (!frame) {\n  return emptyOption('No heatmap data yet');\n}\nconst field = (name) => frame.fields.find((f) => f.name === name);\nconst gridX = field('grid_x');\nconst gridY = field('grid_y');\nconst eventCount = field('event_count');\nif (!gridX || !gridY || !eventCount) {\n  return emptyOption('Missing heatmap fields');\n}\nconst values = (f) => Array.from(f.values);\nconst xs = values(gridX);\nconst ys = values(gridY);\nconst counts = values(eventCount);\nconst points = xs.map((x, i) => [Number(x), Number(ys[i]), Number(counts[i])]);\nconst maxCount = Math.max(1, ...counts.map((v) => Number(v)));\nreturn {\n  tooltip: {\n    position: 'top',\n    formatter: (p) => `x: ${p.value[0]}<br/>y: ${p.value[1]}<br/>events: ${p.value[2]}`\n  },\n  grid: { left: 56, right: 40, top: 24, bottom: 48 },\n  xAxis: { type: 'value', name: 'x bucket', minInterval: 100 },\n  yAxis: { type: 'value', name: 'y bucket', minInterval: 100, inverse: true },\n  visualMap: {\n    min: 0,\n    max: maxCount,\n    calculable: true,\n    orient: 'horizontal',\n    left: 'center',\n    bottom: 0,\n    inRange: { color: ['#d7f0ff', '#6fb6ff', '#f7c948', '#f25f5c'] }\n  },\n  series: [{\n    name: 'Mouse Events',\n    type: 'heatmap',\n    data: points,\n    emphasis: { itemStyle: { borderColor: '#111827', borderWidth: 1 } }\n  }]\n};"
+      },
+      "pluginVersion": "6.6.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres_mouse_tracking"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT grid_x, grid_y, SUM(event_count) AS event_count FROM mouse_heatmap WHERE ('$page_url' = '*' OR page_url = '$page_url') GROUP BY grid_x, grid_y ORDER BY grid_y, grid_x;",
+          "refId": "A"
+        }
+      ],
+      "title": "Mouse Position Heatmap",
+      "type": "volkovlabs-echarts-panel"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": [
+    "mouse-tracking"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "*"
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "postgres_mouse_tracking"
+        },
+        "definition": "SELECT DISTINCT page_url FROM mouse_heatmap ORDER BY page_url",
+        "hide": 0,
+        "includeAll": true,
+        "allValue": "*",
+        "multi": false,
+        "name": "page_url",
+        "label": "Page URL",
+        "options": [],
+        "query": "SELECT DISTINCT page_url FROM mouse_heatmap ORDER BY page_url",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Mouse Tracking Overview",
+  "uid": "mouse-tracking-overview",
+  "version": 1,
+  "weekStart": ""
+}

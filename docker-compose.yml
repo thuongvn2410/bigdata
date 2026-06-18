@@ -1,0 +1,146 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    hostname: zookeeper
+    container_name: mouse-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - ./data/runtime/zookeeper:/var/lib/zookeeper/data
+    healthcheck:
+      test: ["CMD-SHELL", "echo srvr | nc -w 2 localhost 2181 | grep Zookeeper"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: kafka
+    container_name: mouse-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes:
+      - ./data/runtime/kafka:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: mouse-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: >
+      bash -lc "kafka-topics --bootstrap-server kafka:29092
+      --create --if-not-exists --topic mouse-events
+      --partitions 3 --replication-factor 1"
+
+  postgres:
+    image: postgres:16
+    container_name: mouse-postgres
+    environment:
+      POSTGRES_DB: mousetracking
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/runtime/postgres:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mousetracking"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  tracking-api:
+    build:
+      context: ./tracking-api
+    container_name: mouse-tracking-api
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: mouse-events
+      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/mousetracking
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=2)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    image: nginx:alpine
+    container_name: mouse-frontend
+    ports:
+      - "8088:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on:
+      - tracking-api
+
+  spark-streaming:
+    build:
+      context: ./docker/spark
+    container_name: mouse-spark-streaming
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: mouse-events
+      POSTGRES_JDBC_URL: jdbc:postgresql://postgres:5432/mousetracking
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      CHECKPOINT_LOCATION: /opt/spark/checkpoints/mouse-streaming
+    volumes:
+      - ./spark-jobs:/opt/spark/jobs:ro
+      - ./data/spark/checkpoints:/opt/spark/checkpoints
+    command: >
+      /opt/spark/bin/spark-submit
+      /opt/spark/jobs/spark_mouse_streaming.py
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mouse-grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: volkovlabs-echarts-panel
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro

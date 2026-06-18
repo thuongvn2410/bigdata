@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Mouse Heatmap Overlay</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/heatmap.js/2.0.2/heatmap.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Arial, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+    }
+
+    #controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 20px;
+      background: #16213e;
+      border-bottom: 1px solid #0f3460;
+      flex-wrap: wrap;
+    }
+
+    #controls h2 { font-size: 15px; color: #e94560; white-space: nowrap; }
+
+    label { font-size: 13px; color: #aaa; }
+
+    select {
+      padding: 5px 10px;
+      border-radius: 4px;
+      border: 1px solid #0f3460;
+      background: #0f3460;
+      color: #eee;
+      font-size: 13px;
+    }
+
+    button {
+      padding: 6px 16px;
+      border-radius: 4px;
+      border: none;
+      background: #e94560;
+      color: #fff;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    button:hover { background: #c73652; }
+
+    button:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+
+    #reset-btn {
+      background: #8b1e3f;
+    }
+
+    #reset-btn:hover {
+      background: #a5264d;
+    }
+
+    #status { font-size: 12px; color: #888; margin-left: auto; }
+
+    #heatmap-wrapper {
+      width: 100%;
+      min-height: calc(100vh - 55px);
+      overflow: auto;
+      padding: 16px;
+      background: #10182f;
+    }
+
+    #preview-frame {
+      position: relative;
+      width: 100%;
+      min-height: calc(100vh - 87px);
+      overflow: visible;
+      background: #fff;
+      border: 2px solid #e94560;
+      border-radius: 6px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    #preview-label {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 6px 10px;
+      background: rgba(15, 52, 96, 0.92);
+      border-bottom: 1px solid rgba(233, 69, 96, 0.7);
+      color: #fff;
+      font-size: 12px;
+      line-height: 1.3;
+    }
+
+    #preview-body {
+      position: relative;
+      width: 100%;
+      min-height: calc(100vh - 117px);
+      background: #fff;
+    }
+
+    #page-preview {
+      display: block;
+      width: 100%;
+      border: 0;
+      background: #fff;
+      pointer-events: none;
+    }
+
+    #heatmap-layer {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    #heatmap-container {
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    #empty-msg {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: #999;
+      font-size: 18px;
+      text-align: center;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+<div id="controls">
+  <h2>Mouse Heatmap Overlay</h2>
+
+  <label>Page URL:</label>
+  <select id="page_url_select">
+    <option value="">Loading...</option>
+  </select>
+
+  <label>Event type:</label>
+  <select id="event_type_select">
+    <option value="all">All</option>
+    <option value="click">click</option>
+    <option value="mousemove">mousemove</option>
+    <option value="scroll">scroll</option>
+  </select>
+
+  <button onclick="loadHeatmap()">Refresh</button>
+  <button id="reset-btn" type="button" onclick="resetData()">Reset dữ liệu</button>
+  <a href="/" style="color:#aaa;font-size:13px;text-decoration:none;">← Back to Tracking Page</a>
+
+  <span id="status"></span>
+</div>
+
+<div id="heatmap-wrapper">
+  <div id="preview-frame">
+    <div id="preview-label">Preview: http://localhost:8088/</div>
+    <div id="preview-body">
+      <iframe id="page-preview" title="Selected page preview"></iframe>
+      <div id="heatmap-layer">
+        <div id="heatmap-container"></div>
+      </div>
+      <div id="empty-msg">No data yet — interact on the tracking page first.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const API = "http://localhost:8000";
+  let heatmapInstance = null;
+  let currentPreviewPage = null;
+
+  function setStatus(msg) {
+    document.getElementById("status").textContent = msg;
+  }
+
+  function getPageHeight() {
+    const preview = document.getElementById("page-preview");
+    try {
+      const doc = preview.contentDocument;
+      if (!doc) return window.innerHeight - 55;
+
+      return Math.max(
+        doc.body.scrollHeight,
+        doc.documentElement.scrollHeight,
+        doc.body.offsetHeight,
+        doc.documentElement.offsetHeight,
+        window.innerHeight - 55
+      );
+    } catch (e) {
+      return window.innerHeight - 55;
+    }
+  }
+
+  function resizeOverlay() {
+    const previewBody = document.getElementById("preview-body");
+    const h = getPageHeight();
+    previewBody.style.height = h + "px";
+    document.getElementById("page-preview").style.height = h + "px";
+    document.getElementById("heatmap-layer").style.height = h + "px";
+    document.getElementById("heatmap-container").style.height = h + "px";
+
+    if (heatmapInstance) {
+      heatmapInstance.repaint();
+    }
+  }
+
+  function loadPreview(pageUrl) {
+    const preview = document.getElementById("page-preview");
+    if (currentPreviewPage === pageUrl) {
+      resizeOverlay();
+      return Promise.resolve();
+    }
+
+    currentPreviewPage = pageUrl;
+    document.getElementById("preview-label").textContent = `Preview: http://localhost:8088${pageUrl}`;
+    return new Promise(resolve => {
+      preview.onload = () => {
+        resizeOverlay();
+        resolve();
+      };
+      preview.src = pageUrl;
+      setTimeout(() => {
+        resizeOverlay();
+        resolve();
+      }, 1000);
+    });
+  }
+
+  async function loadPages() {
+    try {
+      const res = await fetch(API + "/pages");
+      const json = await res.json();
+      const sel = document.getElementById("page_url_select");
+      sel.innerHTML = "";
+      if (!json.pages || json.pages.length === 0) {
+        sel.innerHTML = '<option value="/">/</option>';
+      } else {
+        json.pages.forEach(p => {
+          const opt = document.createElement("option");
+          opt.value = p;
+          opt.textContent = p;
+          sel.appendChild(opt);
+        });
+      }
+    } catch (e) {
+      document.getElementById("page_url_select").innerHTML = '<option value="/">/</option>';
+    }
+  }
+
+  async function loadHeatmap() {
+    const pageUrl = document.getElementById("page_url_select").value || "/";
+    const eventType = document.getElementById("event_type_select").value;
+
+    setStatus("Loading...");
+    document.getElementById("empty-msg").style.display = "block";
+
+    try {
+      await loadPreview(pageUrl);
+
+      const res = await fetch(
+        `${API}/heatmap?page_url=${encodeURIComponent(pageUrl)}&event_type=${encodeURIComponent(eventType)}`
+      );
+      const json = await res.json();
+
+      resizeOverlay();
+
+      if (!heatmapInstance) {
+        heatmapInstance = h337.create({
+          container: document.getElementById("heatmap-container"),
+          radius: 30,
+          maxOpacity: 0.8,
+          minOpacity: 0.05,
+          blur: 0.75,
+        });
+      } else {
+        heatmapInstance.setData({ max: 1, data: [] });
+      }
+
+      const previewWidth = document.getElementById("preview-body").clientWidth;
+
+      // Scale every point's x to the current preview width using the recorded
+      // viewport width (vw). Scroll points already have vw set by the backend.
+      const points = (json.data || []).map(d => {
+        const vw = d.vw || previewWidth;
+        return {
+          x: Math.round(d.x * previewWidth / vw),
+          y: d.y,
+          value: d.value,
+        };
+      });
+
+      if (points.length === 0) {
+        setStatus("No events found for this filter.");
+        return;
+      }
+
+      document.getElementById("empty-msg").style.display = "none";
+      heatmapInstance.setData({ max: json.max || 1, data: points });
+      setStatus(`${points.length} points rendered (max intensity: ${json.max})`);
+    } catch (e) {
+      setStatus("Error: " + e.message);
+    }
+  }
+
+  (async () => {
+    await loadPages();
+    await loadHeatmap();
+  })();
+
+  async function resetData() {
+    if (!confirm("Xóa toàn bộ dữ liệu heatmap đang lưu trong Postgres? Bao gồm event_raw và mouse_heatmap. Không thể hoàn tác.")) return;
+    const btn = document.getElementById("reset-btn");
+    btn.disabled = true;
+    btn.textContent = "Đang reset...";
+    try {
+      const res = await fetch(API + "/reset", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "reset failed");
+      setStatus("Reset xong: dữ liệu heatmap trong Postgres đã được xóa.");
+      if (heatmapInstance) heatmapInstance.setData({ max: 1, data: [] });
+      document.getElementById("empty-msg").style.display = "block";
+      document.getElementById("page_url_select").innerHTML = '<option value="/">/</option>';
+      currentPreviewPage = null;
+      await loadPreview("/");
+    } catch (e) {
+      setStatus("Reset lỗi: " + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Reset dữ liệu";
+    }
+  }
+
+  document.getElementById("page_url_select").addEventListener("change", loadHeatmap);
+  document.getElementById("event_type_select").addEventListener("change", loadHeatmap);
+  window.addEventListener("resize", () => {
+    resizeOverlay();
+    loadHeatmap();
+  });
+</script>
+
+</body>
+</html>

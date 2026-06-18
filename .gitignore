@@ -1,0 +1,19 @@
+# Runtime data volumes and stream checkpoints
+data/
+
+# Python bytecode and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node/editor/temp files
+node_modules/
+.vscode/
+.idea/
+*.log
+.DS_Store
+
+# Local env/secrets
+.env
+.env.*

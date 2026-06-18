@@ -1,0 +1,661 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Heatmap UI",
+      "tooltip": "Open heatmap page",
+      "type": "link",
+      "url": "http://localhost:8088/heatmap.html"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Tracking Page",
+      "tooltip": "Open tracking page",
+      "type": "link",
+      "url": "http://localhost:8088/"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "API Health",
+      "tooltip": "Open tracking API health endpoint",
+      "type": "link",
+      "url": "http://localhost:8000/"
+    }
+  ],
+  "panels": [
+    {
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "## Mouse Tracking System Healthcheck\n\nTracks the observable health of the heatmap pipeline: browser events -> Tracking API -> Kafka -> Spark Streaming -> PostgreSQL -> Grafana/heatmap UI. This dashboard uses the PostgreSQL datasource, so API/Kafka/Spark health is inferred from data arriving in `event_raw` and `mouse_heatmap`.",
+        "mode": "markdown"
+      },
+      "pluginVersion": "11.0.0",
+      "title": "System Healthcheck",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres_mouse_tracking"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "basic",
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "OK": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "WARN": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "NO DATA": {
+                        "color": "red",
+                        "index": 2
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "id": 2,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres_mouse_tracking"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH stats AS (\n  SELECT\n    COUNT(*) AS total_events,\n    COUNT(*) FILTER (WHERE event_type = 'click') AS click_events,\n    COUNT(*) FILTER (WHERE event_type = 'mousemove') AS mousemove_events,\n    COUNT(*) FILTER (WHERE event_type = 'scroll') AS scroll_events,\n    COALESCE(EXTRACT(EPOCH FROM (NOW() - MAX(ingested_at)))::int, 999999) AS latest_event_age_sec\n  FROM event_raw\n), heatmap_stats AS (\n  SELECT\n    COUNT(*) AS heatmap_buckets,\n    COALESCE(SUM(event_count), 0) AS heatmap_events,\n    COALESCE(EXTRACT(EPOCH FROM (NOW() - MAX(updated_at)))::int, 999999) AS heatmap_age_sec\n  FROM mouse_heatmap\n)\nSELECT subsystem, status, details\nFROM (\n  SELECT 1 AS sort_order, 'PostgreSQL datasource' AS subsystem, 'OK' AS status, 'Grafana query succeeded at ' || TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') AS details\n  UNION ALL\n  SELECT 2, 'Tracking API /track -> Kafka', CASE WHEN total_events > 0 THEN 'OK' ELSE 'NO DATA' END, total_events || ' events observed in event_raw' FROM stats\n  UNION ALL\n  SELECT 3, 'Kafka -> Spark -> PostgreSQL ingestion', CASE WHEN latest_event_age_sec <= 300 THEN 'OK' WHEN total_events > 0 THEN 'WARN' ELSE 'NO DATA' END, 'latest event age: ' || latest_event_age_sec || ' seconds' FROM stats\n  UNION ALL\n  SELECT 4, 'Click event coverage', CASE WHEN click_events > 0 THEN 'OK' ELSE 'NO DATA' END, click_events || ' click events' FROM stats\n  UNION ALL\n  SELECT 5, 'Mousemove event coverage', CASE WHEN mousemove_events > 0 THEN 'OK' ELSE 'NO DATA' END, mousemove_events || ' mousemove events' FROM stats\n  UNION ALL\n  SELECT 6, 'Scroll event coverage', CASE WHEN scroll_events > 0 THEN 'OK' ELSE 'NO DATA' END, scroll_events || ' scroll events' FROM stats\n  UNION ALL\n  SELECT 7, 'Spark heatmap aggregate writer', CASE WHEN heatmap_buckets > 0 THEN 'OK' ELSE 'NO DATA' END, heatmap_buckets || ' buckets, ' || heatmap_events || ' aggregated events' FROM heatmap_stats\n  UNION ALL\n  SELECT 8, 'Heatmap UI data source', CASE WHEN heatmap_buckets > 0 OR total_events > 0 THEN 'OK' ELSE 'NO DATA' END, 'heatmap API can render from event_raw and mouse_heatmap' FROM stats, heatmap_stats\n) checks\nORDER BY sort_order;",
+          "refId": "A"
+        }
+      ],
+      "title": "Subsystem Health Matrix",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres_mouse_tracking"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 13
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres_mouse_tracking"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS total_events FROM event_raw;",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Raw Events",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres_mouse_tracking"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 13
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres_mouse_tracking"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(EXTRACT(EPOCH FROM (NOW() - MAX(ingested_at)))::int, 999999) AS latest_event_age_sec FROM event_raw;",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest Event Age",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres_mouse_tracking"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 13
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres_mouse_tracking"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS heatmap_buckets FROM mouse_heatmap;",
+          "refId": "A"
+        }
+      ],
+      "title": "Heatmap Buckets",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres_mouse_tracking"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 900
+              },
+              {
+                "color": "red",
+                "value": 3600
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 13
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres_mouse_tracking"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(EXTRACT(EPOCH FROM (NOW() - MAX(updated_at)))::int, 999999) AS latest_heatmap_age_sec FROM mouse_heatmap;",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest Heatmap Aggregate Age",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres_mouse_tracking"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres_mouse_tracking"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(ingested_at, '1m'), event_type AS metric, COUNT(*) AS value\nFROM event_raw\nWHERE $__timeFilter(ingested_at)\nGROUP BY 1, event_type\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "Event Ingestion Rate by Type",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres_mouse_tracking"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "id": 8,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres_mouse_tracking"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT event_type, COUNT(*) AS total_events, MAX(ingested_at) AS latest_ingested_at, COALESCE(EXTRACT(EPOCH FROM (NOW() - MAX(ingested_at)))::int, 999999) AS age_sec\nFROM event_raw\nGROUP BY event_type\nORDER BY event_type;",
+          "refId": "A"
+        }
+      ],
+      "title": "Event Type Coverage",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres_mouse_tracking"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "id": 9,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres_mouse_tracking"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT page_url, COUNT(*) AS bucket_count, SUM(event_count) AS aggregated_events, MAX(updated_at) AS latest_updated_at, COALESCE(EXTRACT(EPOCH FROM (NOW() - MAX(updated_at)))::int, 999999) AS age_sec\nFROM mouse_heatmap\nGROUP BY page_url\nORDER BY aggregated_events DESC;",
+          "refId": "A"
+        }
+      ],
+      "title": "Heatmap Aggregate Writer by Page",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres_mouse_tracking"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "id": 10,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres_mouse_tracking"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT ingested_at, event_type, page_url, x, y, scroll_y, viewport_width, viewport_height, kafka_partition, kafka_offset\nFROM event_raw\nORDER BY ingested_at DESC\nLIMIT 30;",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest Raw Events",
+      "type": "table"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": [
+    "mouse-tracking",
+    "healthcheck"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Mouse Tracking System Healthcheck",
+  "uid": "mouse-tracking-system-healthcheck",
+  "version": 1,
+  "weekStart": ""
+}
